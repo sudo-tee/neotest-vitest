@@ -257,7 +257,12 @@ local function parsed_json_to_results(data, output_file, consoleOut)
 
   for _, testResult in pairs(data.testResults) do
     local testFn = testResult.name
-
+    tests[testFn] = {
+      status = testResult.status,
+      short = testFn .. ": " .. testResult.status,
+      output = consoleOut,
+      location = testFn,
+    }
     for _, assertionResult in pairs(testResult.assertionResults) do
       local status, name = assertionResult.status, assertionResult.title
 
