@@ -1,12 +1,14 @@
 # neotest-vitest
 
+This is a personal fork of [marilari88/neotest-vitest](https://github.com/marilari88/neotest-vitest)
+
 This plugin provides a [Vitest](https://vitest.dev/) adapter for the [Neotest](https://github.com/rcarriga/neotest) framework.
 
 Credits to [neotest-jest](https://github.com/haydenmeade/neotest-jest)
 
 ## Known issues
-- ~~Wrong error location on collecting results - (this is related to Vitest reporting issue)~~ (solved by Vitest 0.23.0)
 - test.each is currently not well supported (WIP)
+- tests with parameters or variables will not appear in the summary
 
 ## How to install it
 ```
@@ -14,7 +16,7 @@ use({
   'rcarriga/neotest',
   requires = {
     ...,
-    'marilari88/neotest-vitest',
+    'sudo-tee/neotest-vitest',
   }
   config = function()
     require('neotest').setup({
