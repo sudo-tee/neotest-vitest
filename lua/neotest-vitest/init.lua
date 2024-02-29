@@ -34,7 +34,6 @@ local function hasVitestDependencyInJson(packageJsonContent)
 
   return false
 end
-
 ---@return boolean
 local function hasRootProjectVitestDependency()
   local success, packageJsonContent = pcall(lib.files.read, rootPackageJson)
