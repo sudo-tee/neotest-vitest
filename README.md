@@ -1,5 +1,7 @@
 # neotest-vitest
 
+This is a personal fork of [marilari88/neotest-vitest](https://github.com/marilari88/neotest-vitest)
+
 This plugin provides a [Vitest](https://vitest.dev/) adapter for the [Neotest](https://github.com/rcarriga/neotest) framework.
 
 Credits to [neotest-jest](https://github.com/haydenmeade/neotest-jest)
@@ -7,6 +9,7 @@ Credits to [neotest-jest](https://github.com/haydenmeade/neotest-jest)
 ## Known issues
 
 - test.each is currently not well supported (WIP)
+- tests with parameters or variables will not appear in the summary
 
 ## How to install it
 
@@ -57,6 +60,7 @@ Make sure you have Treesitter installed with the right language parser installed
 ```
 
 ## Configuration
+
 ```lua
 {
   "nvim-neotest/neotest",
@@ -133,9 +137,9 @@ end
 ```lua
 
 vim.api.nvim_set_keymap(
-    "n", 
-    "<leader>twr", 
-    "<cmd>lua require('neotest').run.run({ vitestCommand = 'vitest --watch' })<cr>", 
+    "n",
+    "<leader>twr",
+    "<cmd>lua require('neotest').run.run({ vitestCommand = 'vitest --watch' })<cr>",
     {desc = "Run Watch"}
 )
 
