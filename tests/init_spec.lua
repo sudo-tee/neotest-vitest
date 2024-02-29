@@ -9,30 +9,51 @@ A = function(...)
 end
 
 describe("adapter enabled", function()
-  async.it("enable adapter", function()
+  async.it("vitest simple repo", function()
     assert.Not.Nil(plugin.root("./spec"))
-  end)
-
-  async.it("disable adapter", function()
-    assert.Nil(plugin.root("./spec-jest"))
   end)
 
   async.it("disable adapter no package.json", function()
     assert.Nil(plugin.root("."))
   end)
+
+  async.it("enable adapter for monorepo with vitest at root", function()
+    assert.Not.Nil(plugin.root("./spec-monorepo"))
+  end)
 end)
 
 describe("is_test_file", function()
-  it("matches vitest files", function()
-    assert.True(plugin.is_test_file("./spec/basic.test.ts"))
+  local original_dir
+  before_each(function()
+    original_dir = vim.api.nvim_eval("getcwd()")
   end)
 
-  it("does not match plain js files", function()
-    assert.False(plugin.is_test_file("./index.ts"))
+  after_each(function()
+    vim.api.nvim_set_current_dir(original_dir)
   end)
 
-  it("does not match file name ending with test", function()
-    assert.False(plugin.is_test_file("./setupVitest.ts"))
+  async.it("matches vitest files", function()
+    vim.api.nvim_set_current_dir("./spec")
+    assert.is.truthy(plugin.is_test_file("./spec/basic.test.ts"))
+  end)
+
+  async.it("does not match plain js files", function()
+    assert.is.falsy(plugin.is_test_file("./index.ts"))
+  end)
+
+  async.it("does not match file name ending with test", function()
+    assert.is.falsy(plugin.is_test_file("./setupVitest.ts"))
+  end)
+
+  async.it("does not match test in repo with jest", function()
+    vim.api.nvim_set_current_dir("./spec-jest")
+    assert.is.falsy(plugin.is_test_file("./spec-jest/basic.test.ts"))
+  end)
+
+  async.it("matches vitest files in monorepo", function()
+    vim.api.nvim_set_current_dir("./spec-monorepo")
+    assert.is.truthy(plugin.is_test_file("./spec-monorepo/packages/example/basic.test.ts"))
+    assert.is.truthy(plugin.is_test_file("./spec-monorepo/apps/todo/todo.test.tsx"))
   end)
 end)
 
@@ -147,9 +168,31 @@ describe("build_spec", function()
     local command = spec.command
     assert.is.truthy(command)
     assert.contains(command, "vitest")
-    assert.contains(command, "--run")
+    assert.contains(command, "--watch=false")
     assert.contains(command, "--reporter=verbose")
     assert.contains(command, "--testNamePattern=.*")
+    assert.contains(command, "--config=./spec/vite.config.ts")
+    assert.contains(command, "./spec/basic.test.ts")
+    assert.is.truthy(spec.context.file)
+    assert.is.truthy(spec.context.results_path)
+  end)
+
+  async.it("builds command passed vitest command ", function()
+    local positions = plugin.discover_positions("./spec/basic.test.ts"):to_list()
+    local tree = Tree.from_list(positions, function(pos)
+      return pos.id
+    end)
+    local spec = plugin.build_spec({ vitestCommand = "vitest --watch", tree = tree })
+
+    assert.is.truthy(spec)
+    local command = spec.command
+    assert.is.truthy(command)
+    assert.contains(command, "vitest")
+    assert.not_contains(command, "--run")
+    assert.contains(command, "--watch")
+    assert.contains(command, "--reporter=verbose")
+    assert.contains(command, "--testNamePattern=.*")
+    assert.contains(command, "--config=./spec/vite.config.ts")
     assert.contains(command, "./spec/basic.test.ts")
     assert.is.truthy(spec.context.file)
     assert.is.truthy(spec.context.results_path)
@@ -168,11 +211,42 @@ describe("build_spec", function()
     local command = spec.command
     assert.is.truthy(command)
     assert.contains(command, "vitest")
-    assert.contains(command, "--run")
+    assert.contains(command, "--watch=false")
     assert.contains(command, "--reporter=verbose")
     assert.contains(command, "--testNamePattern=^ describe text")
+    assert.contains(command, "--config=./spec/vite.config.ts")
     assert.contains(command, "./spec/basic.test.ts")
     assert.is.truthy(spec.context.file)
     assert.is.truthy(spec.context.results_path)
+  end)
+
+  async.it("uses vite config", function()
+    local positions = plugin.discover_positions("./spec/config/vite/basic.test.ts"):to_list()
+
+    local tree = Tree.from_list(positions, function(pos)
+      return pos.id
+    end)
+
+    local spec = plugin.build_spec({ tree = tree:children()[1] })
+
+    assert.is.truthy(spec)
+    local command = spec.command
+    assert.is.truthy(command)
+    assert.contains(command, "--config=./spec/config/vite/vite.config.ts")
+  end)
+
+  async.it("uses vitest config over vite config", function()
+    local positions = plugin.discover_positions("./spec/config/vitest/basic.test.ts"):to_list()
+
+    local tree = Tree.from_list(positions, function(pos)
+      return pos.id
+    end)
+
+    local spec = plugin.build_spec({ tree = tree:children()[1] })
+
+    assert.is.truthy(spec)
+    local command = spec.command
+    assert.is.truthy(command)
+    assert.contains(command, "--config=./spec/config/vitest/vitest.config.ts")
   end)
 end)

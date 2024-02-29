@@ -9,41 +9,40 @@ local util = require("neotest-vitest.util")
 ---@field vitestConfigFile? string|fun(): string
 ---@field env? table<string, string>|fun(): table<string, string>
 ---@field cwd? string|fun(): string
+---@field filter_dir? fun(name: string, relpath: string, root: string): boolean
+---@field is_test_file? fun(file_path: string): boolean
 
----@type neotest.Adapter
+---@class neotest.Adapter
 local adapter = { name = "neotest-vitest" }
 
 local rootPackageJson = vim.fn.getcwd() .. "/package.json"
 
+---@param packageJsonContent string
 ---@return boolean
-local function rootProjectHasVitestDependency()
-  local path = rootPackageJson
+local function hasVitestDependencyInJson(packageJsonContent)
+  local parsedPackageJson = vim.json.decode(packageJsonContent)
 
-  local success, packageJsonContent = pcall(lib.files.read, path)
+  for _, dependencyType in ipairs({ "dependencies", "devDependencies" }) do
+    if parsedPackageJson[dependencyType] then
+      for key, _ in pairs(parsedPackageJson[dependencyType]) do
+        if key == "vitest" then
+          return true
+        end
+      end
+    end
+  end
+
+  return false
+end
+---@return boolean
+local function hasRootProjectVitestDependency()
+  local success, packageJsonContent = pcall(lib.files.read, rootPackageJson)
   if not success then
     print("cannot read package.json")
     return false
   end
 
-  local parsedPackageJson = vim.json.decode(packageJsonContent)
-
-  if parsedPackageJson["dependencies"] then
-    for key, _ in pairs(parsedPackageJson["dependencies"]) do
-      if key == "vitest" then
-        return true
-      end
-    end
-  end
-
-  if parsedPackageJson["devDependencies"] then
-    for key, _ in pairs(parsedPackageJson["devDependencies"]) do
-      if key == "vitest" then
-        return true
-      end
-    end
-  end
-
-  return true
+  return hasVitestDependencyInJson(packageJsonContent)
 end
 
 ---@param path string
@@ -61,32 +60,14 @@ local function hasVitestDependency(path)
     return false
   end
 
-  local parsedPackageJson = vim.json.decode(packageJsonContent)
-
-  if parsedPackageJson["dependencies"] then
-    for key, _ in pairs(parsedPackageJson["dependencies"]) do
-      if key == "vitest" then
-        return true
-      end
-    end
-  end
-
-  if parsedPackageJson["devDependencies"] then
-    for key, _ in pairs(parsedPackageJson["devDependencies"]) do
-      if key == "vitest" then
-        return true
-      end
-    end
-  end
-
-  return rootProjectHasVitestDependency()
+  return hasVitestDependencyInJson(packageJsonContent) or hasRootProjectVitestDependency()
 end
 
 adapter.root = function(path)
   return lib.files.match_root_pattern("package.json")(path)
 end
 
-function adapter.filter_dir(name)
+function adapter.filter_dir(name, _relpath, _root)
   return name ~= "node_modules"
 end
 
@@ -126,7 +107,7 @@ function adapter.discover_positions(path)
       (arguments [
           (string (string_fragment) @namespace.name)
           (member_expression object: (identifier) @namespace.name property:(property_identifier) @prop_name (#eq? @prop_name "name") )
-      ] . [(arrow_function) (function)]) 
+      ] . [(arrow_function) (function_expression)]) 
     )) @namespace.definition
     ; Matches: `describe.only('context')`
     ((call_expression
@@ -136,7 +117,7 @@ function adapter.discover_positions(path)
       (arguments [
           (string (string_fragment) @namespace.name)
           (member_expression object: (identifier) @namespace.name property:(property_identifier) @prop_name (#eq? @prop_name "name") )
-      ] . [(arrow_function) (function)]) 
+      ] . [(arrow_function) (function_expression)]) 
     )) @namespace.definition
     ; Matches: `describe.each(['data'])('context')`
     ((call_expression
@@ -148,21 +129,21 @@ function adapter.discover_positions(path)
       (arguments [
           (string (string_fragment) @namespace.name)
           (member_expression object: (identifier) @namespace.name property:(property_identifier) @prop_name (#eq? @prop_name "name") )
-      ] . [(arrow_function) (function)]) 
+      ] . [(arrow_function) (function_expression)]) 
     )) @namespace.definition
 
     ; -- Tests --
     ; Matches: `test('test') / it('test')`
     ((call_expression
       function: (identifier) @func_name (#any-of? @func_name "it" "test")
-      arguments: (arguments (string (string_fragment) @test.name) . [(arrow_function) (function)])
+      arguments: (arguments (string (string_fragment) @test.name) . [(arrow_function) (function_expression)])
     )) @test.definition
     ; Matches: `test.only('test') / it.only('test')`
     ((call_expression
       function: (member_expression
         object: (identifier) @func_name (#any-of? @func_name "test" "it")
       )
-      arguments: (arguments (string (string_fragment) @test.name) [(arrow_function) (function)])
+      arguments: (arguments (string (string_fragment) @test.name) [(arrow_function) (function_expression)])
     )) @test.definition
     ; Matches: `test.each(['data'])('test') / it.each(['data'])('test')`
     ((call_expression
@@ -171,7 +152,7 @@ function adapter.discover_positions(path)
           object: (identifier) @func_name (#any-of? @func_name "it" "test")
         )
       )
-      arguments: (arguments (string (string_fragment) @test.name) [(arrow_function) (function)])
+      arguments: (arguments (string (string_fragment) @test.name) [(arrow_function) (function_expression)])
     )) @test.definition
   ]]
 
@@ -190,7 +171,7 @@ local function getVitestCommand(path)
   return "vitest"
 end
 
-local vitestConfigPattern = util.root_pattern("vitest.config.{js,ts}")
+local vitestConfigPattern = util.root_pattern("{vite,vitest}.config.{js,ts,mjs,mts}")
 
 ---@param path string
 ---@return string|nil
@@ -201,14 +182,28 @@ local function getVitestConfig(path)
     return nil
   end
 
-  local vitestJs = util.path.join(rootPath, "vitest.config.js")
-  local vitestTs = util.path.join(rootPath, "vitest.config.ts")
+  -- Ordered by config precedence (https://vitest.dev/config/#configuration)
+  local possibleVitestConfigNames = {
+    "vitest.config.ts",
+    "vitest.config.js",
+    "vite.config.ts",
+    "vite.config.js",
+    -- `.mts,.mjs` are sometimes needed (https://vitejs.dev/guide/migration.html#deprecate-cjs-node-api)
+    "vitest.config.mts",
+    "vitest.config.mjs",
+    "vite.config.mts",
+    "vite.config.mjs",
+  }
 
-  if util.path.exists(vitestTs) then
-    return vitestTs
+  for _, configName in ipairs(possibleVitestConfigNames) do
+    local configPath = util.path.join(rootPath, configName)
+
+    if util.path.exists(configPath) then
+      return configPath
+    end
   end
 
-  return vitestJs
+  return nil
 end
 
 local function escapeTestPattern(s)
@@ -227,7 +222,7 @@ local function escapeTestPattern(s)
   )
 end
 
-local function get_strategy_config(strategy, command)
+local function get_strategy_config(strategy, command, cwd)
   local config = {
     dap = function()
       return {
@@ -238,6 +233,7 @@ local function get_strategy_config(strategy, command)
         runtimeExecutable = command[1],
         console = "integratedTerminal",
         internalConsoleOptions = "neverOpen",
+        cwd = cwd or "${workspaceFolder}",
       }
     end,
   }
@@ -254,56 +250,6 @@ end
 ---@return string|nil
 local function getCwd(path)
   return nil
-end
-
----@param args neotest.RunArgs
----@return neotest.RunSpec | nil
-function adapter.build_spec(args)
-  local results_path = async.fn.tempname() .. ".json"
-  local tree = args.tree
-
-  if not tree then
-    return
-  end
-
-  local pos = args.tree:data()
-  local testNamePattern = ".*"
-
-  if pos.type == "test" then
-    testNamePattern = escapeTestPattern(pos.name) .. "$"
-  end
-
-  if pos.type == "namespace" then
-    testNamePattern = "^ " .. escapeTestPattern(pos.name)
-  end
-
-  local binary = getVitestCommand(pos.path)
-  local config = getVitestConfig(pos.path) or "vitest.config.js"
-  local command = vim.split(binary, "%s+")
-  if util.path.exists(config) then
-    -- only use config if available
-    table.insert(command, "--config=" .. config)
-  end
-
-  vim.list_extend(command, {
-    "--run",
-    "--reporter=verbose",
-    "--reporter=json",
-    "--outputFile=" .. results_path,
-    "--testNamePattern=" .. testNamePattern .. "",
-    pos.path,
-  })
-
-  return {
-    command = command,
-    cwd = getCwd(pos.path),
-    context = {
-      results_path = results_path,
-      file = pos.path,
-    },
-    strategy = get_strategy_config(args.strategy, command),
-    env = getEnv(args[2] and args[2].env or {}),
-  }
 end
 
 local function cleanAnsi(s)
@@ -377,10 +323,87 @@ local function parsed_json_to_results(data, output_file, consoleOut)
   return tests
 end
 
+---@param args neotest.RunArgs
+---@return neotest.RunSpec | nil
+function adapter.build_spec(args)
+  local results_path = async.fn.tempname() .. ".json"
+  local tree = args.tree
+
+  if not tree then
+    return
+  end
+
+  local pos = args.tree:data()
+  local testNamePattern = ".*"
+
+  if pos.type == "test" then
+    testNamePattern = escapeTestPattern(pos.name) .. "$"
+  end
+
+  if pos.type == "namespace" then
+    testNamePattern = "^ " .. escapeTestPattern(pos.name)
+  end
+
+  local binary = args.vitestCommand or getVitestCommand(pos.path)
+  local config = getVitestConfig(pos.path) or "vitest.config.js"
+  local command = vim.split(binary, "%s+")
+
+  if util.path.exists(config) then
+    -- only use config if available
+    table.insert(command, "--config=" .. config)
+  end
+
+  vim.list_extend(command, {
+    "--watch=false",
+    "--reporter=verbose",
+    "--reporter=json",
+    "--outputFile=" .. results_path,
+    "--testNamePattern=" .. testNamePattern,
+    vim.fs.normalize(pos.path),
+  })
+
+  local cwd = getCwd(pos.path)
+
+  -- creating empty file for streaming results
+  lib.files.write(results_path, "")
+  local stream_data, stop_stream = util.stream(results_path)
+
+  return {
+    command = command,
+    cwd = cwd,
+    context = {
+      results_path = results_path,
+      file = pos.path,
+      stop_stream = stop_stream,
+    },
+    stream = function()
+      return function()
+        local new_results = stream_data()
+
+        if not new_results or new_results == "" then
+          return {}
+        end
+
+        local ok, parsed = pcall(vim.json.decode, new_results, { luanil = { object = true } })
+
+        if not ok or not parsed.testResults then
+          return {}
+        end
+
+        return parsed_json_to_results(parsed, results_path, nil)
+      end
+    end,
+    strategy = get_strategy_config(args.strategy, command, cwd),
+    env = getEnv(args[2] and args[2].env or {}),
+  }
+end
+
 ---@async
 ---@param spec neotest.RunSpec
 ---@return neotest.Result[]
 function adapter.results(spec, b, tree)
+  spec.context.stop_stream()
+
   local output_file = spec.context.results_path
 
   local success, data = pcall(lib.files.read, output_file)
@@ -416,6 +439,7 @@ setmetatable(adapter, {
         return opts.vitestCommand
       end
     end
+
     if is_callable(opts.vitestConfigFile) then
       getVitestConfig = opts.vitestConfigFile
     elseif opts.vitestConfigFile then
@@ -423,6 +447,7 @@ setmetatable(adapter, {
         return opts.vitestConfigFile
       end
     end
+
     if is_callable(opts.env) then
       getEnv = opts.env
     elseif opts.env then
@@ -430,6 +455,7 @@ setmetatable(adapter, {
         return vim.tbl_extend("force", opts.env, specEnv)
       end
     end
+
     if is_callable(opts.cwd) then
       getCwd = opts.cwd
     elseif opts.cwd then
@@ -437,6 +463,18 @@ setmetatable(adapter, {
         return opts.cwd
       end
     end
+
+    if is_callable(opts.filter_dir) then
+      adapter.filter_dir = opts.filter_dir
+    end
+
+    if is_callable(opts.is_test_file) then
+      local is_test_file = adapter.is_test_file
+      adapter.is_test_file = function(file_path)
+        return is_test_file(file_path) and opts.is_test_file(file_path)
+      end
+    end
+
     return adapter
   end,
 })
