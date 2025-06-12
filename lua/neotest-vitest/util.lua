@@ -65,7 +65,7 @@ M.path = (function()
   end
 
   local function path_join(...)
-    return table.concat(vim.tbl_flatten({ ... }), "/")
+    return table.concat(vim.iter({ ... }):flatten():totable(), "/")
   end
 
   -- Traverse the path calling cb along the way.
@@ -156,7 +156,7 @@ function M.search_ancestors(startpath, func)
 end
 
 function M.root_pattern(...)
-  local patterns = vim.tbl_flatten({ ... })
+  local patterns = vim.iter({ ... }):flatten():totable()
   local function matcher(path)
     for _, pattern in ipairs(patterns) do
       for _, p in ipairs(vim.fn.glob(M.path.join(path, pattern), true, true)) do
@@ -171,6 +171,14 @@ function M.root_pattern(...)
   end
 end
 
+function M.find_git_ancestor(startpath)
+  return M.search_ancestors(startpath, function(path)
+    -- .git is a file when the project is a git worktree or it's a directory if it's a regular project
+    if M.path.is_file(M.path.join(path, ".git")) or M.path.is_dir(M.path.join(path, ".git")) then
+      return path
+    end
+  end)
+end
 function M.find_node_modules_ancestor(startpath)
   return M.search_ancestors(startpath, function(path)
     if M.path.is_dir(M.path.join(path, "node_modules")) then
